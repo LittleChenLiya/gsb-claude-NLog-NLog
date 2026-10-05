@@ -278,6 +278,147 @@ namespace NLog
             InternalLogger.Info("Configuration initialized: {0}", config);
         }
 
+        /// <summary>
+        /// Publishes a new <see cref="LoggingConfiguration"/> to this factory and returns an explicit receipt.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The new configuration's targets are initialized <b>before</b> activation. If initialization fails,
+        /// the active configuration is left unchanged and only the targets from the failed configuration are
+        /// closed. The receipt (<see cref="ConfigPublishResult.Succeeded"/>) reports whether activation occurred.
+        /// </para>
+        /// <para>
+        /// On success, the new configuration is activated immediately. The previously active configuration is
+        /// then flushed (waiting for in-flight events to complete) and closed in the background, so a stuck
+        /// target in the old configuration does not block publication. Old log events that were already being
+        /// written continue to the target set captured at write-time and are not mixed with the new configuration.
+        /// </para>
+        /// <para>
+        /// Flush (<see cref="Flush()"/>) binds to the configuration that is active at the time the call is made;
+        /// it does not wait for events written after the call. The default <see cref="Configuration"/> setter and
+        /// <see cref="ReconfigExistingLoggers()"/> are retained for backward compatibility.
+        /// </para>
+        /// </remarks>
+        /// <param name="config">The new configuration to publish, or <c>null</c> to unload the active configuration.</param>
+        /// <returns>A <see cref="ConfigPublishResult"/> describing the outcome of the publish.</returns>
+        public ConfigPublishResult PublishConfiguration(LoggingConfiguration? config)
+        {
+            lock (_syncRoot)
+            {
+                var oldConfig = _config;
+
+                if (config is null)
+                {
+                    if (oldConfig != null)
+                    {
+                        oldConfig.OnConfigurationAssigned(null);
+                    }
+
+                    _config = null;
+                    _configLoaded = false;
+                    ReconfigExistingLoggers();
+                    OnConfigurationChanged(new LoggingConfigurationChangedEventArgs(null, oldConfig));
+
+                    if (oldConfig != null)
+                    {
+                        ScheduleOldConfigCleanup(oldConfig);
+                    }
+
+                    return new ConfigPublishResult(true, oldConfig, null);
+                }
+
+                // Initialize the new configuration's targets WITHOUT activating them.
+                // If initialization fails, the active configuration is left unchanged.
+                try
+                {
+                    config.InitializeAll();
+                }
+                catch (Exception exception)
+                {
+                    InternalLogger.Error(exception, "LogFactory failed to initialize new configuration. Active configuration is unchanged.");
+                    try
+                    {
+                        config.Close();
+                    }
+                    catch (Exception closeException)
+                    {
+                        InternalLogger.Warn(closeException, "LogFactory failed to close targets from failed configuration.");
+                    }
+                    return new ConfigPublishResult(false, oldConfig, exception);
+                }
+
+                // Initialization succeeded - activate the new configuration
+                if (_config is null)
+                {
+                    LogNLogAssemblyVersion();
+                }
+
+                _config = config;
+                _configLoaded = true;
+                config.OnConfigurationAssigned(this);
+                config.Dump();
+                ReconfigExistingLoggers();
+                OnConfigurationChanged(new LoggingConfigurationChangedEventArgs(config, oldConfig));
+
+                if (oldConfig != null)
+                {
+                    ScheduleOldConfigCleanup(oldConfig);
+                }
+
+                return new ConfigPublishResult(true, oldConfig, null);
+            }
+        }
+
+        /// <summary>
+        /// Schedules the old configuration to be flushed (waiting for in-flight events) and then closed.
+        /// Runs on a background thread so a stuck target in the old configuration does not block publication.
+        /// </summary>
+        private void ScheduleOldConfigCleanup(LoggingConfiguration oldConfig)
+        {
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    FlushOldConfig(oldConfig);
+                }
+                catch (Exception exception)
+                {
+                    InternalLogger.Error(exception, "LogFactory failed to flush old configuration.");
+                }
+                finally
+                {
+                    try
+                    {
+                        oldConfig.OnConfigurationAssigned(null);
+                        oldConfig.Close();
+                    }
+                    catch (Exception exception)
+                    {
+                        InternalLogger.Error(exception, "LogFactory failed to close old configuration.");
+                    }
+                }
+            });
+        }
+
+        /// <summary>
+        /// Flushes the old configuration, waiting for its in-flight events to complete (up to the default timeout).
+        /// The flush binds to the targets captured from the old configuration at call time.
+        /// </summary>
+        private void FlushOldConfig(LoggingConfiguration oldConfig)
+        {
+            using (var waitForFlush = new ManualResetEvent(false))
+            {
+                var flushTimeoutHandler = oldConfig.FlushAllTargets((exception) => waitForFlush.Set());
+                if (flushTimeoutHandler is null)
+                {
+                    return;
+                }
+
+                waitForFlush.WaitOne(DefaultFlushTimeout);
+                flushTimeoutHandler.Invoke(null);
+            }
+        }
+
         private void ServiceRepository_TypeRegistered(object? sender, ServiceRepositoryUpdateEventArgs e)
         {
             _config?.CheckForMissingServiceTypes(e.ServiceType);
