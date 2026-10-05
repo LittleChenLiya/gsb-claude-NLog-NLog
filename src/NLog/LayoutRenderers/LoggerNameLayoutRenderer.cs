@@ -64,6 +64,9 @@ namespace NLog.LayoutRenderers
         public bool PrefixName { get; set; }
 
         /// <inheritdoc/>
+        public override bool IsPure => true;    // Output only depends on the LogEventInfo logger-name
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             var loggerName = logEvent.LoggerName;

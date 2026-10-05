@@ -47,16 +47,22 @@ namespace NLog.LayoutRenderers
     public class ThreadNameLayoutRenderer : LayoutRenderer, IStringValueRenderer
     {
         /// <inheritdoc/>
+        public override bool IsPure => false;   // Reads ambient thread-context, consults LogEventInfo.LayoutSnapshot when available
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
-            builder.Append(GetStringValue());
+            builder.Append(GetStringValue(logEvent));
         }
 
-        private static string? GetStringValue()
+        private static string? GetStringValue(LogEventInfo logEvent)
         {
+            var snapshot = logEvent.LayoutSnapshot;
+            if (snapshot != null)
+                return snapshot.ThreadName; // Sealed snapshot also wins when thread-name was blank
             return System.Threading.Thread.CurrentThread.Name;
         }
 
-        string? IStringValueRenderer.GetFormattedString(LogEventInfo logEvent) => GetStringValue();
+        string? IStringValueRenderer.GetFormattedString(LogEventInfo logEvent) => GetStringValue(logEvent);
     }
 }

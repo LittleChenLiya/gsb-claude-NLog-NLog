@@ -48,20 +48,23 @@ namespace NLog.LayoutRenderers
     public class ThreadIdLayoutRenderer : LayoutRenderer, IStringValueRenderer
     {
         /// <inheritdoc/>
+        public override bool IsPure => false;   // Reads ambient thread-context, consults LogEventInfo.LayoutSnapshot when available
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             //no culture needed for ints
-            builder.AppendInvariant(GetValue());
+            builder.AppendInvariant(GetValue(logEvent));
         }
 
-        private static int GetValue()
+        private static int GetValue(LogEventInfo logEvent)
         {
-            return AsyncHelpers.GetManagedThreadId();
+            return logEvent.LayoutSnapshot?.ManagedThreadId ?? AsyncHelpers.GetManagedThreadId();
         }
 
         string IStringValueRenderer.GetFormattedString(LogEventInfo logEvent)
         {
-            return GetValue().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return GetValue(logEvent).ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
     }
 }

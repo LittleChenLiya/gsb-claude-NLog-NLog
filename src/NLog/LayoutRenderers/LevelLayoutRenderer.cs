@@ -95,6 +95,9 @@ namespace NLog.LayoutRenderers
         private bool _uppercase;
 
         /// <inheritdoc/>
+        public override bool IsPure => true;    // Output only depends on the LogEventInfo level
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             builder.Append(GetLogLevelStringValue(logEvent));

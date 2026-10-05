@@ -78,6 +78,9 @@ namespace NLog.LayoutRenderers
         public string Text { get; set; } = string.Empty;
 
         /// <inheritdoc/>
+        public override bool IsPure => true;    // Output only depends on the fixed literal text
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             builder.Append(Text);

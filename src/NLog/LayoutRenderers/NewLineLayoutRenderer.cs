@@ -45,6 +45,9 @@ namespace NLog.LayoutRenderers
     public class NewLineLayoutRenderer : LayoutRenderer
     {
         /// <inheritdoc/>
+        public override bool IsPure => true;    // Output is a fixed new-line
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             builder.AppendLine();

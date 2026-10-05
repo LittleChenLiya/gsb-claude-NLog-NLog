@@ -119,6 +119,9 @@ namespace NLog.LayoutRenderers
         }
 
         /// <inheritdoc/>
+        public override bool IsPure => true;    // Output only depends on the LogEventInfo properties
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             if (TryGetValue(logEvent, out var value))

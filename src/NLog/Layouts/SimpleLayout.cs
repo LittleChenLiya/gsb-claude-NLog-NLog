@@ -404,6 +404,8 @@ namespace NLog.Layouts
             }
             catch (Exception exception)
             {
+                (_rawValueRenderer as LayoutRenderer)?.AnnotateExceptionSource(exception);
+
                 //also check IsErrorEnabled, otherwise 'MustBeRethrown' writes it to Error
                 if (InternalLogger.IsWarnEnabled || InternalLogger.IsErrorEnabled)
                 {
@@ -454,6 +456,8 @@ namespace NLog.Layouts
             }
             catch (Exception exception)
             {
+                (_stringValueRenderer as LayoutRenderer)?.AnnotateExceptionSource(exception);
+
                 //also check IsErrorEnabled, otherwise 'MustBeRethrown' writes it to Error
                 if (InternalLogger.IsWarnEnabled || InternalLogger.IsErrorEnabled)
                 {

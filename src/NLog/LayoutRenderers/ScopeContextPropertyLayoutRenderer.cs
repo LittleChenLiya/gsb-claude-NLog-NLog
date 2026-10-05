@@ -73,6 +73,9 @@ namespace NLog.LayoutRenderers
         public CultureInfo Culture { get; set; } = CultureInfo.InvariantCulture;
 
         /// <inheritdoc/>
+        public override bool IsPure => false;   // Reads ambient scope-context, consults LogEventInfo.LayoutSnapshot when available
+
+        /// <inheritdoc/>
         protected override void InitializeLayoutRenderer()
         {
             base.InitializeLayoutRenderer();
@@ -84,7 +87,7 @@ namespace NLog.LayoutRenderers
         /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
-            var value = GetValue();
+            var value = GetValue(logEvent);
             AppendFormattedValue(builder, logEvent, value, Format, Culture);
         }
 
@@ -92,15 +95,22 @@ namespace NLog.LayoutRenderers
         {
             if (!MessageTemplates.ValueFormatter.FormatAsJson.Equals(Format))
             {
-                var value = GetValue();
+                var value = GetValue(logEvent);
                 var stringValue = FormatHelper.TryFormatToString(value, Format, GetFormatProvider(logEvent, Culture));
                 return stringValue;
             }
             return null;
         }
 
-        private object? GetValue()
+        private object? GetValue(LogEventInfo logEvent)
         {
+            var snapshot = logEvent.LayoutSnapshot;
+            if (snapshot != null)
+            {
+                snapshot.TryGetScopeProperty(Item, out var snapshotValue);
+                return snapshotValue;
+            }
+
             ScopeContext.TryGetProperty(Item, out var value);
             return value;
         }

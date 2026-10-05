@@ -302,6 +302,27 @@ namespace NLog
         /// </summary>
         public Exception? Exception { get; set; }
 
+        private LayoutSnapshot? _layoutSnapshot;
+
+        /// <summary>
+        /// Gets the explicit snapshot of the ambient layout-evaluation context (thread and scope properties),
+        /// that was sealed into this logging event by <see cref="CaptureLayoutSnapshot"/>.
+        /// <see langword="null"/> when no snapshot has been captured, and ambient context should be used.
+        /// </summary>
+        public LayoutSnapshot? LayoutSnapshot => _layoutSnapshot;
+
+        /// <summary>
+        /// Seals the ambient layout-evaluation context (current thread and scope properties) into this
+        /// logging event, so deferred (queued) layout evaluation will not pick up foreign ambient context.
+        /// </summary>
+        /// <returns>The same logging event, to allow for fluent chaining.</returns>
+        public LogEventInfo CaptureLayoutSnapshot()
+        {
+            if (_layoutSnapshot is null)
+                _layoutSnapshot = LayoutSnapshot.Capture();
+            return this;
+        }
+
         /// <summary>
         /// Gets or sets the logger name.
         /// </summary>

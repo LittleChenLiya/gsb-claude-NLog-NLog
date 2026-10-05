@@ -52,6 +52,29 @@ namespace NLog.LayoutRenderers
         private IValueFormatter? _valueFormatter;
 
         /// <summary>
+        /// Key used when annotating an <see cref="Exception"/> with the source layout renderer.
+        /// </summary>
+        internal const string RendererSourceExceptionDataKey = "NLog.LayoutRenderer";
+
+        /// <summary>
+        /// Whether this layout renderer is pure, meaning its output only depends on the provided
+        /// <see cref="LogEventInfo"/> and never on ambient state like current thread, scope-context,
+        /// environment or clock. Impure renderers should consult <see cref="LogEventInfo.LayoutSnapshot"/>
+        /// when available, so deferred (queued) layout evaluation sees the captured context.
+        /// </summary>
+        public virtual bool IsPure => false;
+
+        /// <summary>
+        /// Annotates the exception with the source layout renderer, so deferred layout evaluation
+        /// can report where the failure came from.
+        /// </summary>
+        internal void AnnotateExceptionSource(Exception exception)
+        {
+            if (!exception.Data.Contains(RendererSourceExceptionDataKey))
+                exception.Data[RendererSourceExceptionDataKey] = ToString();
+        }
+
+        /// <summary>
         /// Gets the logging configuration this target is part of.
         /// </summary>
         protected LoggingConfiguration? LoggingConfiguration { get; private set; }
@@ -166,6 +189,7 @@ namespace NLog.LayoutRenderers
             }
             catch (Exception exception)
             {
+                AnnotateExceptionSource(exception);
                 InternalLogger.Warn(exception, "Exception in '{0}.Append()'", GetType());
 
                 if (exception.MustBeRethrown())

@@ -72,6 +72,9 @@ namespace NLog.LayoutRenderers
         public bool Raw { get; set; }
 
         /// <inheritdoc/>
+        public override bool IsPure => true;    // Output only depends on the LogEventInfo message and exception
+
+        /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
             bool exceptionOnly = logEvent.Exception != null && WithException && logEvent.Parameters?.Length == 1 && ReferenceEquals(logEvent.Parameters[0], logEvent.Exception) && logEvent.Message == "{0}";
