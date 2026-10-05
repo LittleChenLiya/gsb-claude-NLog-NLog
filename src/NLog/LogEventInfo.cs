@@ -37,6 +37,7 @@ namespace NLog
     using System.Collections.Generic;
     using System.ComponentModel;
     using System.Diagnostics;
+    using System.Linq;
     using System.Threading;
     using JetBrains.Annotations;
     using NLog.Common;
@@ -71,6 +72,7 @@ namespace NLog
         private LogMessageFormatter? _messageFormatter;
         private LayoutCacheLinkedNode? _layoutCache;
         private PropertiesDictionary? _properties;
+        private ScopeContextSnapshot? _scopeContextSnapshot;
         private int _sequenceId;
 
         /// <summary>
@@ -576,6 +578,57 @@ namespace NLog
         public AsyncLogEventInfo WithContinuation(AsyncContinuation asyncContinuation)
         {
             return new AsyncLogEventInfo(this, asyncContinuation);
+        }
+
+        /// <summary>
+        /// Gets a value indicating whether this event has an explicit <see cref="ScopeContextSnapshot"/>.
+        /// </summary>
+        /// <remarks>
+        /// The snapshot is captured when the event is enqueued for asynchronous processing,
+        /// so late layout evaluation uses the enqueued context instead of the current thread's context.
+        /// </remarks>
+        public bool HasScopeContextSnapshot => _scopeContextSnapshot != null;
+
+        /// <summary>
+        /// Gets the explicit <see cref="ScopeContextSnapshot"/> captured when the event was enqueued.
+        /// </summary>
+        public ScopeContextSnapshot? ScopeContextSnapshot => _scopeContextSnapshot;
+
+        /// <summary>
+        /// Captures the current thread identity and <see cref="ScopeContext"/> properties as an
+        /// explicit snapshot, sealing the logging context into this event for late layout evaluation.
+        /// </summary>
+        /// <remarks>
+        /// Calling this method is idempotent - the first call captures the snapshot and subsequent
+        /// calls are ignored. Scope property values are stored as-is (no ToString on unknown objects).
+        /// </remarks>
+        public void CaptureScopeContextSnapshot()
+        {
+            if (_scopeContextSnapshot != null)
+                return;
+
+            var properties = ScopeContext.GetAllProperties().ToArray();
+            _scopeContextSnapshot = new ScopeContextSnapshot(
+                Thread.CurrentThread.ManagedThreadId,
+                Thread.CurrentThread.Name,
+                properties);
+        }
+
+        /// <summary>
+        /// Attempts to retrieve a scope property value from the explicit snapshot captured at enqueue time.
+        /// </summary>
+        /// <param name="key">The scope property key.</param>
+        /// <param name="value">The scope property value, or <see langword="null"/> if not found.</param>
+        /// <returns><see langword="true"/> if the key was found in the snapshot; otherwise, <see langword="false"/>.</returns>
+        public bool TryGetScopeContextProperty(string key, out object? value)
+        {
+            if (_scopeContextSnapshot != null)
+            {
+                return _scopeContextSnapshot.TryGetValue(key, out value);
+            }
+
+            value = null;
+            return false;
         }
 
         /// <summary>

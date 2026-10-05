@@ -462,7 +462,8 @@ namespace NLog.Layouts
 
                 if (exception.MustBeRethrown())
                 {
-                    throw;
+                    var rendererIdentity = (_stringValueRenderer as LayoutRenderer)?.ToString() ?? "Unknown Layout Renderer";
+                    throw new NLogRuntimeException($"Exception in {rendererIdentity}.GetFormattedString()", exception);
                 }
             }
 

@@ -84,7 +84,7 @@ namespace NLog.LayoutRenderers
         /// <inheritdoc/>
         protected override void Append(StringBuilder builder, LogEventInfo logEvent)
         {
-            var value = GetValue();
+            var value = GetValue(logEvent);
             AppendFormattedValue(builder, logEvent, value, Format, Culture);
         }
 
@@ -92,15 +92,23 @@ namespace NLog.LayoutRenderers
         {
             if (!MessageTemplates.ValueFormatter.FormatAsJson.Equals(Format))
             {
-                var value = GetValue();
+                var value = GetValue(logEvent);
                 var stringValue = FormatHelper.TryFormatToString(value, Format, GetFormatProvider(logEvent, Culture));
                 return stringValue;
             }
             return null;
         }
 
-        private object? GetValue()
+        private object? GetValue(LogEventInfo logEvent)
         {
+            if (logEvent.HasScopeContextSnapshot)
+            {
+                // Non-pure renderer: use the explicit snapshot sealed at enqueue time,
+                // not the current thread's ScopeContext (avoids cross-thread context bleed).
+                logEvent.TryGetScopeContextProperty(Item, out var snapshotValue);
+                return snapshotValue;
+            }
+
             ScopeContext.TryGetProperty(Item, out var value);
             return value;
         }

@@ -166,11 +166,12 @@ namespace NLog.LayoutRenderers
             }
             catch (Exception exception)
             {
+                var rendererIdentity = ToString();
                 InternalLogger.Warn(exception, "Exception in '{0}.Append()'", GetType());
 
                 if (exception.MustBeRethrown())
                 {
-                    throw;
+                    throw new NLogRuntimeException($"Exception in {rendererIdentity}.Append()", exception);
                 }
             }
         }
