@@ -56,6 +56,11 @@ namespace NLog.Config
 
         private bool _missingServiceTypes;
 
+        private int _activeTargetWrites;        // Number of target-writes currently in-flight against this configuration
+        private int _retireCloseScheduled;      // 1 = Close has been scheduled for when in-flight writes have drained
+        private int _drainCallbackSignaled;     // 1 = The writes-drained callback has been signaled
+        private Action? _writesDrainedCallback;
+
         private readonly ConfigVariablesDictionary _variables;
 
         /// <summary>
@@ -671,6 +676,55 @@ namespace NLog.Config
             }
 
             InternalLogger.Debug("Finished closing logging configuration.");
+        }
+
+        /// <summary>
+        /// Number of target-writes currently in-flight against this configuration. Internal for unit tests.
+        /// </summary>
+        internal int ActiveTargetWriteCount => Interlocked.CompareExchange(ref _activeTargetWrites, 0, 0);
+
+        /// <summary>
+        /// Registers that a target of this configuration has started writing a logevent
+        /// </summary>
+        internal void EnterTargetWrite()
+        {
+            Interlocked.Increment(ref _activeTargetWrites);
+        }
+
+        /// <summary>
+        /// Registers that a target of this configuration has completed writing a logevent
+        /// </summary>
+        internal void ExitTargetWrite()
+        {
+            if (Interlocked.Decrement(ref _activeTargetWrites) == 0)
+            {
+                SignalWritesDrained();
+            }
+        }
+
+        /// <summary>
+        /// Schedules the <paramref name="writesDrainedCallback"/> to be called when all in-flight
+        /// target-writes against this configuration have completed. The callback is signaled at most once.
+        /// </summary>
+        internal void CloseWhenWritesDrained(Action writesDrainedCallback)
+        {
+            if (Interlocked.CompareExchange(ref _retireCloseScheduled, 1, 0) != 0)
+                return; // Close already scheduled. Close only happens once.
+
+            Interlocked.Exchange(ref _writesDrainedCallback, writesDrainedCallback);
+            if (Interlocked.CompareExchange(ref _activeTargetWrites, 0, 0) == 0)
+            {
+                SignalWritesDrained();
+            }
+        }
+
+        private void SignalWritesDrained()
+        {
+            var callback = Interlocked.CompareExchange(ref _writesDrainedCallback, null, null);
+            if (callback != null && Interlocked.CompareExchange(ref _drainCallbackSignaled, 1, 0) == 0)
+            {
+                callback();
+            }
         }
 
         /// <summary>

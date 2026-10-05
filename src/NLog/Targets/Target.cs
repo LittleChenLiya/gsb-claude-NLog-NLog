@@ -67,6 +67,11 @@ namespace NLog.Targets
         internal NLogDependencyResolveException? InitializeMissingDependencyException => _initializeException as NLogDependencyResolveException ?? _initializeException?.InnerException as NLogDependencyResolveException;
 
         /// <summary>
+        /// Exception from failed target-initialization. Internal for unit tests.
+        /// </summary>
+        internal Exception? InitializeException => _initializeException;
+
+        /// <summary>
         /// Gets or sets the name of the target.
         /// </summary>
         /// <remarks><b>[Required]</b> Default: <see cref="String.Empty"/></remarks>
@@ -319,6 +324,8 @@ namespace NLog.Targets
             var wrappedContinuation = AsyncHelpers.PreventMultipleCalls(logEvent.Continuation);
             var wrappedLogEvent = logEvent.LogEvent.WithContinuation(wrappedContinuation);
 
+            var loggingConfiguration = LoggingConfiguration;
+            loggingConfiguration?.EnterTargetWrite();
             try
             {
                 WriteAsyncThreadSafe(wrappedLogEvent);
@@ -329,6 +336,10 @@ namespace NLog.Targets
                     throw;
 
                 wrappedLogEvent.Continuation(ex);
+            }
+            finally
+            {
+                loggingConfiguration?.ExitTargetWrite();
             }
         }
 
@@ -367,6 +378,8 @@ namespace NLog.Targets
                 logEvents[i] = logEvents[i].LogEvent.WithContinuation(AsyncHelpers.PreventMultipleCalls(logEvents[i].Continuation));
             }
 
+            var loggingConfiguration = LoggingConfiguration;
+            loggingConfiguration?.EnterTargetWrite();
             try
             {
                 WriteAsyncThreadSafe(logEvents);
@@ -381,6 +394,10 @@ namespace NLog.Targets
                 {
                     logEvents[i].Continuation(exception);
                 }
+            }
+            finally
+            {
+                loggingConfiguration?.ExitTargetWrite();
             }
         }
 

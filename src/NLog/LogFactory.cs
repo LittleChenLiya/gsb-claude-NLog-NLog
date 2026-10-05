@@ -278,6 +278,119 @@ namespace NLog
             InternalLogger.Info("Configuration initialized: {0}", config);
         }
 
+        /// <summary>
+        /// Publishes a new logging configuration, and returns an explicit receipt that acknowledges the outcome.
+        /// </summary>
+        /// <remarks>
+        /// The new configuration is only activated after all its targets have initialized successfully.
+        /// Logevents that already entered the logging pipeline will continue to write to the target-collection
+        /// from when they entered, and will not be mixed with the new configuration. The previous configuration
+        /// will not close its targets before their in-flight writes have completed. When initialization of the
+        /// new configuration fails, then only the targets from the failed attempt are closed, and the active
+        /// configuration stays unchanged. Other <see cref="LogFactory"/>-instances are not affected.
+        /// </remarks>
+        /// <param name="newConfiguration">The new logging configuration to activate</param>
+        /// <returns>Receipt that acknowledges whether the new configuration was activated, and allows waiting for the previous configuration to complete its close-operation.</returns>
+        public ConfigPublishReceipt PublishConfiguration(LoggingConfiguration newConfiguration)
+        {
+            Guard.ThrowIfNull(newConfiguration);
+
+            lock (_syncRoot)
+            {
+                if (_isDisposing)
+                {
+                    return ConfigPublishReceipt.Failed(new NLogRuntimeException("LogFactory has been disposed."));
+                }
+
+                // Initialize new targets before publishing, so a failing target never becomes active
+                var initializeError = TryInitializeConfiguration(newConfiguration);
+                if (initializeError != null)
+                {
+                    // Initialization failed. Only recycle the targets from this attempt, active configuration stays unchanged
+                    CloseFailedConfiguration(newConfiguration);
+                    return ConfigPublishReceipt.Failed(initializeError);
+                }
+
+                LoggingConfiguration? oldConfig = _config;
+                var receipt = new ConfigPublishReceipt(newConfiguration, oldConfig);
+
+                ActivateLoggingConfiguration(newConfiguration);
+                OnConfigurationChanged(new LoggingConfigurationChangedEventArgs(newConfiguration, oldConfig));
+
+                if (oldConfig is null)
+                {
+                    receipt.SignalPreviousConfigurationClosed();
+                }
+                else
+                {
+                    InternalLogger.Info("Scheduling close of previous configuration, when its in-flight writes have completed.");
+                    oldConfig.OnConfigurationAssigned(null);
+                    oldConfig.CloseWhenWritesDrained(() => CloseRetiredConfiguration(oldConfig, receipt));
+                }
+
+                return receipt;
+            }
+        }
+
+        private Exception? TryInitializeConfiguration(LoggingConfiguration newConfiguration)
+        {
+            try
+            {
+                newConfiguration.InitializeAll();
+            }
+            catch (Exception ex)
+            {
+                InternalLogger.Error(ex, "LogFactory failed to initialize new LoggingConfiguration.");
+                return ex;
+            }
+
+            var allTargets = newConfiguration.AllTargets;
+            for (int i = 0; i < allTargets.Count; ++i)
+            {
+                var targetError = allTargets[i].InitializeException;
+                if (targetError != null)
+                {
+                    InternalLogger.Error(targetError, "LogFactory failed to initialize target: {0}", allTargets[i]);
+                    return targetError;
+                }
+            }
+
+            return null;
+        }
+
+        private void CloseFailedConfiguration(LoggingConfiguration failedConfiguration)
+        {
+            try
+            {
+                failedConfiguration.Close();
+            }
+            catch (Exception ex)
+            {
+                InternalLogger.Error(ex, "LogFactory failed to close the rejected LoggingConfiguration.");
+                if (ex.MustBeRethrownImmediately())
+                    throw;
+            }
+        }
+
+        private void CloseRetiredConfiguration(LoggingConfiguration oldConfig, ConfigPublishReceipt receipt)
+        {
+            try
+            {
+                InternalLogger.Info("Closing previous configuration, after its in-flight writes completed.");
+                oldConfig.Close();
+            }
+            catch (Exception ex)
+            {
+                InternalLogger.Error(ex, "LogFactory failed to close the previous LoggingConfiguration.");
+                if (ex.MustBeRethrownImmediately())
+                    throw;
+            }
+            finally
+            {
+                receipt.SignalPreviousConfigurationClosed();
+            }
+        }
+
         private void ServiceRepository_TypeRegistered(object? sender, ServiceRepositoryUpdateEventArgs e)
         {
             _config?.CheckForMissingServiceTypes(e.ServiceType);
