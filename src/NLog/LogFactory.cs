@@ -181,6 +181,19 @@ namespace NLog
         public bool? ThrowConfigExceptions { get; set; }
 
         /// <summary>
+        /// Gets or sets the diagnostic callback that reports the actual <see cref="NLog.Filters.FilterResult"/>
+        /// returned by every <see cref="NLog.Filters.Filter"/> that was executed in a filter-chain.
+        /// </summary>
+        /// <remarks>
+        /// Only filters that actually executed are reported, so filters skipped because of short-circuiting
+        /// (e.g. after <see cref="NLog.Filters.FilterResult.LogFinal"/> or <see cref="NLog.Filters.FilterResult.IgnoreFinal"/>)
+        /// are never reported with fake results. Exceptions thrown by the callback are caught and logged to
+        /// the <see cref="NLog.Common.InternalLogger"/> (never written back to a <see cref="Logger"/>), and
+        /// never change the filtering conclusion.
+        /// </remarks>
+        public Action<NLog.Filters.Filter, LogEventInfo, NLog.Filters.FilterResult>? FilterChainDiagnostics { get; set; }
+
+        /// <summary>
         /// Gets or sets a value indicating whether Variables should be kept on configuration reload.
         /// </summary>
         /// <remarks>Default: <see langword="true"/></remarks>

@@ -76,7 +76,7 @@ namespace NLog
             {
                 var currentFilterChain = t.FilterChain;
                 FilterResult result = ReferenceEquals(prevFilterChain, currentFilterChain) ?
-                    prevFilterResult : GetFilterResult(currentFilterChain, logEvent, t.FilterDefaultAction);
+                    prevFilterResult : GetFilterResult(logFactory, currentFilterChain, logEvent, t.FilterDefaultAction);
 
                 if (result != FilterResult.Ignore && result != FilterResult.IgnoreFinal)
                 {
@@ -163,15 +163,17 @@ namespace NLog
         /// <summary>
         /// Gets the filter result.
         /// </summary>
+        /// <param name="logFactory">The LogFactory that maybe has registered <see cref="LogFactory.FilterChainDiagnostics"/>.</param>
         /// <param name="filterChain">The filter chain.</param>
         /// <param name="logEvent">The log event.</param>
         /// <param name="filterDefaultAction">default result if there are no filters, or none of the filters decides.</param>
         /// <returns>The result of the filter.</returns>
-        private static FilterResult GetFilterResult(IList<Filter> filterChain, LogEventInfo logEvent, FilterResult filterDefaultAction)
+        private static FilterResult GetFilterResult(LogFactory logFactory, IList<Filter> filterChain, LogEventInfo logEvent, FilterResult filterDefaultAction)
         {
             if (filterChain.Count == 0)
                 return FilterResult.Neutral;
 
+            var filterChainDiagnostics = logFactory.FilterChainDiagnostics;
             try
             {
                 //Memory profiling pointed out that using a foreach-loop was allocating
@@ -180,6 +182,11 @@ namespace NLog
                 {
                     Filter f = filterChain[i];
                     var result = f.GetFilterResult(logEvent);
+                    if (filterChainDiagnostics != null)
+                    {
+                        ReportFilterResult(filterChainDiagnostics, f, logEvent, result);
+                    }
+
                     if (result != FilterResult.Neutral)
                     {
                         return result;
@@ -198,6 +205,23 @@ namespace NLog
                 }
 
                 return FilterResult.Ignore;
+            }
+        }
+
+        /// <summary>
+        /// Reports the actual result from a single executed filter to the diagnostics-callback.
+        /// Any failure in the callback is swallowed (logged to <see cref="InternalLogger"/> only,
+        /// never written back to a <see cref="Logger"/>), so it cannot change the filtering conclusion.
+        /// </summary>
+        private static void ReportFilterResult(Action<Filter, LogEventInfo, FilterResult> filterChainDiagnostics, Filter filter, LogEventInfo logEvent, FilterResult result)
+        {
+            try
+            {
+                filterChainDiagnostics(filter, logEvent, result);
+            }
+            catch (Exception exception)
+            {
+                InternalLogger.Warn(exception, "Exception in FilterChainDiagnostics-callback. Filtering conclusion is not affected.");
             }
         }
     }
