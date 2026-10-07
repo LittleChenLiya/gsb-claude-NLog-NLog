@@ -321,6 +321,12 @@ namespace NLog.Targets
 
             try
             {
+                if (!ShouldWriteLogEvent(wrappedLogEvent.LogEvent))
+                {
+                    wrappedLogEvent.Continuation(null);
+                    return;
+                }
+
                 WriteAsyncThreadSafe(wrappedLogEvent);
             }
             catch (Exception ex)
@@ -367,9 +373,19 @@ namespace NLog.Targets
                 logEvents[i] = logEvents[i].LogEvent.WithContinuation(AsyncHelpers.PreventMultipleCalls(logEvents[i].Continuation));
             }
 
+            var eventsToWrite = logEvents;
+            for (int i = 0; i < logEvents.Count; ++i)
+            {
+                if (!ShouldWriteLogEvent(logEvents[i].LogEvent))
+                {
+                    eventsToWrite = FilterRejectedLogEvents(logEvents);
+                    break;
+                }
+            }
+
             try
             {
-                WriteAsyncThreadSafe(logEvents);
+                WriteAsyncThreadSafe(eventsToWrite);
             }
             catch (Exception exception)
             {
@@ -377,11 +393,39 @@ namespace NLog.Targets
                     throw;
 
                 // in case of synchronous failure, assume that nothing is running asynchronously
-                for (int i = 0; i < logEvents.Count; ++i)
+                for (int i = 0; i < eventsToWrite.Count; ++i)
                 {
-                    logEvents[i].Continuation(exception);
+                    eventsToWrite[i].Continuation(exception);
                 }
             }
+        }
+
+        private IList<AsyncLogEventInfo> FilterRejectedLogEvents(IList<AsyncLogEventInfo> logEvents)
+        {
+            var filteredLogEvents = new List<AsyncLogEventInfo>(logEvents.Count);
+            for (int i = 0; i < logEvents.Count; ++i)
+            {
+                if (ShouldWriteLogEvent(logEvents[i].LogEvent))
+                {
+                    filteredLogEvents.Add(logEvents[i]);
+                }
+                else
+                {
+                    logEvents[i].Continuation(null);
+                }
+            }
+            return filteredLogEvents;
+        }
+
+        /// <summary>
+        /// Validates whether the logevent should be written to the target. Allows a target to
+        /// reject a logevent before writing, when the logevent fails validation.
+        /// </summary>
+        /// <param name="logEvent">Log event to validate.</param>
+        /// <returns>False when the logevent is rejected, and should not be written to the target.</returns>
+        internal virtual bool ShouldWriteLogEvent(LogEventInfo logEvent)
+        {
+            return true;
         }
 
         /// <summary>

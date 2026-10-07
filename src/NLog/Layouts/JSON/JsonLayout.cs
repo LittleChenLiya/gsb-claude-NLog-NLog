@@ -39,6 +39,7 @@ namespace NLog.Layouts
     using System.ComponentModel;
     using System.Linq;
     using System.Text;
+    using NLog.Common;
     using NLog.Config;
     using NLog.Internal;
 
@@ -176,6 +177,26 @@ namespace NLog.Layouts
         public bool IncludeGdc { get; set; }
 
         /// <summary>
+        /// Gets or sets whether to validate event-property-names before mapping them to structured output-fields.
+        /// When a mapped event-property-name conflicts with a reserved output-field (configured JsonAttribute),
+        /// or conflicts with another mapped event-property-name, then the logevent is rejected (not written to target).
+        /// Requires <see cref="IncludeEventProperties"/> and explicit assignment of <see cref="EventPropertyNameIgnoreCase"/>.
+        /// </summary>
+        /// <remarks>Default: <see langword="false"/></remarks>
+        /// <docgen category='Layout Options' order='10' />
+        public bool CheckEventPropertyNames { get; set; }
+
+        /// <summary>
+        /// Gets or sets whether <see cref="CheckEventPropertyNames"/> should ignore character-case when
+        /// comparing event-property-names with reserved output-fields. Must be explicitly assigned
+        /// when <see cref="CheckEventPropertyNames"/> is enabled.
+        /// </summary>
+        /// <remarks>Default: <see langword="false"/></remarks>
+        /// <docgen category='Layout Options' order='10' />
+        public bool EventPropertyNameIgnoreCase { get => _eventPropertyNameIgnoreCase ?? false; set => _eventPropertyNameIgnoreCase = value; }
+        private bool? _eventPropertyNameIgnoreCase;
+
+        /// <summary>
         /// Gets or sets whether to include the contents of the <see cref="ScopeContext"/> properties-dictionary.
         /// </summary>
         /// <remarks>Default: <see langword="false"/></remarks>
@@ -256,6 +277,9 @@ namespace NLog.Layouts
         {
             base.InitializeLayout();
 
+            if (CheckEventPropertyNames && IncludeEventProperties && !_eventPropertyNameIgnoreCase.HasValue)
+                throw new NLogConfigurationException("JsonLayout: CheckEventPropertyNames requires explicit assignment of EventPropertyNameIgnoreCase");
+
             if (IncludeScopeProperties)
             {
                 ThreadAgnostic = false;
@@ -290,6 +314,7 @@ namespace NLog.Layouts
             _valueFormatter = null;
             _objectReflectionCache = null;
             _precalculateLayouts = null;
+            _reservedFieldNames = null;
             base.CloseLayout();
         }
 
@@ -318,6 +343,9 @@ namespace NLog.Layouts
         private void RenderJsonFormattedMessage(LogEventInfo logEvent, StringBuilder sb)
         {
             int orgLength = sb.Length;
+
+            if (CheckEventPropertyNames && !ValidateEventPropertyNames(logEvent))
+                return; // LogEvent rejected, because of conflicting event-property-names
 
             foreach (var attribute in _attributes)
             {
@@ -406,6 +434,67 @@ namespace NLog.Layouts
                 return convertible.GetTypeCode() == TypeCode.Object;
             else
                 return propertyValue != null;
+        }
+
+        private HashSet<string>? _reservedFieldNames;
+
+        /// <summary>
+        /// Validates that the event-properties can be mapped to structured output-fields without name-conflicts.
+        /// The validation performs no modifications of the <see cref="LogEventInfo.Properties"/>-dictionary.
+        /// </summary>
+        /// <param name="logEvent">Log event to validate.</param>
+        /// <returns>False when the logevent is rejected, because an event-property-name conflicts with a reserved output-field or another event-property-name.</returns>
+        public bool ValidateEventPropertyNames(LogEventInfo logEvent)
+        {
+            if (!CheckEventPropertyNames || !IncludeEventProperties)
+                return true;    // Name-validation not enabled
+
+            if (logEvent?.HasProperties != true)
+                return true;
+
+            if (!_eventPropertyNameIgnoreCase.HasValue)
+                throw new NLogConfigurationException("JsonLayout: CheckEventPropertyNames requires explicit assignment of EventPropertyNameIgnoreCase");
+
+            var reservedFieldNames = _reservedFieldNames;
+            if (reservedFieldNames is null)
+            {
+                reservedFieldNames = new HashSet<string>(_eventPropertyNameIgnoreCase.Value ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+                for (int i = 0; i < _attributes.Count; ++i)
+                {
+                    if (!string.IsNullOrEmpty(_attributes[i].Name))
+                        reservedFieldNames.Add(_attributes[i].Name);
+                }
+                _reservedFieldNames = reservedFieldNames;
+            }
+
+            bool checkExcludeProperties = ExcludeProperties.Count > 0;
+            var mappedFieldNames = new HashSet<string>(reservedFieldNames.Comparer);
+            using (var propertyEnumerator = logEvent.CreatePropertiesInternal().GetPropertyEnumerator())
+            {
+                while (propertyEnumerator.MoveNext())
+                {
+                    var prop = propertyEnumerator.CurrentParameter;
+                    if (string.IsNullOrEmpty(prop.Name))
+                        continue;
+
+                    if (checkExcludeProperties && ExcludeProperties.Contains(prop.Name))
+                        continue;
+
+                    if (reservedFieldNames.Contains(prop.Name))
+                    {
+                        InternalLogger.Warn("JsonLayout: Rejecting LogEvent because event-property '{0}' conflicts with reserved output-field.", prop.Name);
+                        return false;
+                    }
+
+                    if (!mappedFieldNames.Add(prop.Name))
+                    {
+                        InternalLogger.Warn("JsonLayout: Rejecting LogEvent because event-property '{0}' conflicts with another event-property.", prop.Name);
+                        return false;
+                    }
+                }
+            }
+
+            return true;
         }
 
         private void BeginJsonProperty(StringBuilder sb, string propName, bool beginJsonMessage, bool ensureStringEscape)
