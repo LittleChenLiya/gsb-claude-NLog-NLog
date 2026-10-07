@@ -604,7 +604,7 @@ namespace NLog.Targets
         protected IDictionary<string, object?>? GetContextMdlc(LogEventInfo logEvent) => GetScopeContextProperties(logEvent);
 
         [ThreadAgnostic]
-        internal sealed class TargetWithContextLayout : Layout, IIncludeContext, IUsesStackTrace, IStringValueRenderer
+        internal sealed class TargetWithContextLayout : Layout, IIncludeContext, IUsesStackTrace, IStringValueRenderer, ILogEventValidator
         {
             public Layout TargetLayout
             {
@@ -780,6 +780,14 @@ namespace NLog.Targets
             string? IStringValueRenderer.GetFormattedString(LogEventInfo logEvent)
             {
                 return _targetStringLayout?.GetFormattedString(logEvent);
+            }
+
+            bool ILogEventValidator.ValidateLogEvent(LogEventInfo logEvent)
+            {
+                if (TargetLayout is ILogEventValidator logEventValidator)
+                    return logEventValidator.ValidateLogEvent(logEvent);
+
+                return true;
             }
 
             public class LayoutScopeContextProperties : Layout

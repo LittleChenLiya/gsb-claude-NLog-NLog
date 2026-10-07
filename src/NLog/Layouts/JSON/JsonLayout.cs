@@ -51,10 +51,11 @@ namespace NLog.Layouts
     /// <seealso href="https://github.com/NLog/NLog/wiki/JsonLayout">Documentation on NLog Wiki</seealso>
     [Layout("JsonLayout")]
     [ThreadAgnostic]
-    public class JsonLayout : Layout
+    public class JsonLayout : Layout, ILogEventValidator
     {
         private const int SpacesPerIndent = 2;
         private Layout[]? _precalculateLayouts;
+        private HashSet<string>? _reservedAttributeNames;
 
         private LimitRecursionJsonConvert JsonConverter => _jsonConverter ?? (_jsonConverter = new LimitRecursionJsonConvert(MaxRecursionLimit, SuppressSpaces, ResolveService<IJsonConverter>()));
         private LimitRecursionJsonConvert? _jsonConverter;
@@ -169,6 +170,22 @@ namespace NLog.Layouts
         public bool IncludeEventProperties { get; set; }
 
         /// <summary>
+        /// Gets or sets whether to validate event property names, before mapping them to JSON output fields.
+        /// When validation detects a conflict with a reserved attribute name, or a conflict between
+        /// event property names, then the LogEvent will be rejected and not written to the target.
+        /// </summary>
+        /// <remarks>Default: <see langword="false"/></remarks>
+        /// <docgen category='Layout Options' order='100' />
+        public bool ValidateEventPropertyNames { get; set; }
+
+        /// <summary>
+        /// Gets or sets the comparison to use when validating event property names for conflicts
+        /// </summary>
+        /// <remarks>Default: <see cref="StringComparison.Ordinal"/></remarks>
+        /// <docgen category='Layout Options' order='100' />
+        public StringComparison EventPropertyNameComparison { get; set; } = StringComparison.Ordinal;
+
+        /// <summary>
         /// Gets or sets whether to include the contents of the <see cref="GlobalDiagnosticsContext"/> dictionary.
         /// </summary>
         /// <remarks>Default: <see langword="false"/></remarks>
@@ -267,6 +284,8 @@ namespace NLog.Layouts
 
             _precalculateLayouts = (IncludeScopeProperties || IncludeEventProperties) ? null : ResolveLayoutPrecalculation(Attributes.Select(atr => atr.Layout));
 
+            _reservedAttributeNames = ValidateEventPropertyNames ? ResolveReservedAttributeNames() : null;
+
             foreach (var attribute in _attributes)
             {
                 if (string.IsNullOrEmpty(attribute.Name))
@@ -290,6 +309,7 @@ namespace NLog.Layouts
             _valueFormatter = null;
             _objectReflectionCache = null;
             _precalculateLayouts = null;
+            _reservedAttributeNames = null;
             base.CloseLayout();
         }
 
@@ -396,6 +416,81 @@ namespace NLog.Layouts
 
             if (sb.Length > orgLength)
                 sb.Append(_completeJsonMessage);
+        }
+
+        bool ILogEventValidator.ValidateLogEvent(LogEventInfo logEvent)
+        {
+            return ValidateEventProperties(logEvent);
+        }
+
+        /// <summary>
+        /// Validates whether the event properties can be mapped to JSON output fields without name conflicts.
+        /// Checks for conflicts with reserved attribute names, and for conflicts between event property names.
+        /// </summary>
+        /// <param name="logEvent">LogEvent candidate for structured output</param>
+        /// <returns><see langword="true"/> when the event property names have no conflicts</returns>
+        public bool ValidateEventProperties(LogEventInfo logEvent)
+        {
+            if (!ValidateEventPropertyNames || !logEvent.HasProperties)
+                return true;
+
+            var reservedNames = _reservedAttributeNames ?? (_reservedAttributeNames = ResolveReservedAttributeNames());
+            var comparison = EventPropertyNameComparison;
+            bool checkExcludeProperties = ExcludeProperties.Count > 0;
+            HashSet<string>? mappedNames = null;
+
+            using (var propertyEnumerator = logEvent.CreatePropertiesInternal().GetPropertyEnumerator())
+            {
+                while (propertyEnumerator.MoveNext())
+                {
+                    var propertyName = propertyEnumerator.CurrentParameter.Name;
+                    if (string.IsNullOrEmpty(propertyName))
+                        continue;
+
+                    if (checkExcludeProperties && ExcludeProperties.Contains(propertyName))
+                        continue;
+
+                    if (reservedNames.Contains(propertyName))
+                    {
+                        Common.InternalLogger.Warn("JsonLayout: Rejecting LogEvent because event property name '{0}' conflicts with reserved JSON attribute name.", propertyName);
+                        return false;
+                    }
+
+                    mappedNames = mappedNames ?? new HashSet<string>(ResolveEventPropertyNameComparer(comparison));
+                    if (!mappedNames.Add(propertyName))
+                    {
+                        Common.InternalLogger.Warn("JsonLayout: Rejecting LogEvent because event property name '{0}' conflicts with another event property name.", propertyName);
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private HashSet<string> ResolveReservedAttributeNames()
+        {
+            var reservedNames = new HashSet<string>(ResolveEventPropertyNameComparer(EventPropertyNameComparison));
+            foreach (var attribute in _attributes)
+            {
+                if (!string.IsNullOrEmpty(attribute.Name))
+                    reservedNames.Add(attribute.Name);
+            }
+            return reservedNames;
+        }
+
+        private static StringComparer ResolveEventPropertyNameComparer(StringComparison comparison)
+        {
+            switch (comparison)
+            {
+                case StringComparison.Ordinal: return StringComparer.Ordinal;
+                case StringComparison.OrdinalIgnoreCase: return StringComparer.OrdinalIgnoreCase;
+                case StringComparison.CurrentCulture: return StringComparer.CurrentCulture;
+                case StringComparison.CurrentCultureIgnoreCase: return StringComparer.CurrentCultureIgnoreCase;
+                case StringComparison.InvariantCulture: return StringComparer.InvariantCulture;
+                case StringComparison.InvariantCultureIgnoreCase: return StringComparer.InvariantCultureIgnoreCase;
+                default: return StringComparer.Ordinal;
+            }
         }
 
         private static bool PropertyValueSupportsDottedRecursion(object? propertyValue)

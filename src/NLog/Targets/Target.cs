@@ -302,6 +302,16 @@ namespace NLog.Targets
         }
 
         /// <summary>
+        /// Checks whether the LogEvent should be written to this target. Allows the target to reject the LogEvent before writing
+        /// </summary>
+        /// <param name="logEvent">LogEvent candidate for writing</param>
+        /// <returns><see langword="true"/> when the LogEvent should be written to this target</returns>
+        protected virtual bool ShouldWriteLogEvent(LogEventInfo logEvent)
+        {
+            return true;
+        }
+
+        /// <summary>
         /// Writes the log to the target.
         /// </summary>
         /// <param name="logEvent">Log event to write.</param>
@@ -321,7 +331,15 @@ namespace NLog.Targets
 
             try
             {
-                WriteAsyncThreadSafe(wrappedLogEvent);
+                if (ShouldWriteLogEvent(wrappedLogEvent.LogEvent))
+                {
+                    WriteAsyncThreadSafe(wrappedLogEvent);
+                }
+                else
+                {
+                    InternalLogger.Debug("{0}: Rejected LogEvent because of target validation failure.", this);
+                    wrappedLogEvent.Continuation(null);
+                }
             }
             catch (Exception ex)
             {
@@ -369,7 +387,11 @@ namespace NLog.Targets
 
             try
             {
-                WriteAsyncThreadSafe(logEvents);
+                var acceptedLogEvents = FilterLogEventsForWriting(logEvents);
+                if (acceptedLogEvents != null)
+                {
+                    WriteAsyncThreadSafe(acceptedLogEvents);
+                }
             }
             catch (Exception exception)
             {
@@ -382,6 +404,35 @@ namespace NLog.Targets
                     logEvents[i].Continuation(exception);
                 }
             }
+        }
+
+        private IList<AsyncLogEventInfo>? FilterLogEventsForWriting(IList<AsyncLogEventInfo> logEvents)
+        {
+            List<AsyncLogEventInfo>? acceptedLogEvents = null;
+            for (int i = 0; i < logEvents.Count; ++i)
+            {
+                if (ShouldWriteLogEvent(logEvents[i].LogEvent))
+                {
+                    acceptedLogEvents?.Add(logEvents[i]);
+                }
+                else
+                {
+                    if (acceptedLogEvents is null)
+                    {
+                        acceptedLogEvents = new List<AsyncLogEventInfo>(logEvents.Count - 1);
+                        for (int j = 0; j < i; ++j)
+                            acceptedLogEvents.Add(logEvents[j]);
+                    }
+
+                    InternalLogger.Debug("{0}: Rejected LogEvent because of target validation failure.", this);
+                    logEvents[i].Continuation(null);
+                }
+            }
+
+            if (acceptedLogEvents is null)
+                return logEvents;   // Nothing was rejected
+
+            return acceptedLogEvents.Count > 0 ? acceptedLogEvents : null;
         }
 
         /// <summary>

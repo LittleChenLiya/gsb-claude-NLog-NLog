@@ -73,5 +73,14 @@ namespace NLog.Targets
         /// <remarks><b>[Required]</b> Default: <code>${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}</code></remarks>
         /// <docgen category='Layout Options' order='1' />
         public virtual Layout Layout { get; set; }
+
+        /// <inheritdoc />
+        protected override bool ShouldWriteLogEvent(LogEventInfo logEvent)
+        {
+            if (Layout is ILogEventValidator logEventValidator)
+                return logEventValidator.ValidateLogEvent(logEvent);
+
+            return base.ShouldWriteLogEvent(logEvent);
+        }
     }
 }
