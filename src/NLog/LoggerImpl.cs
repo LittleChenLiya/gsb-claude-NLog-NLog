@@ -180,6 +180,7 @@ namespace NLog
                 {
                     Filter f = filterChain[i];
                     var result = f.GetFilterResult(logEvent);
+                    FilterChainDiagnostics.ReportFilterResult(f, result, logEvent); // Only filters that actually executed are reported
                     if (result != FilterResult.Neutral)
                     {
                         return result;
